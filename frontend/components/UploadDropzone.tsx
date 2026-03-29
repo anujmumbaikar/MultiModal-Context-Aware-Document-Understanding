@@ -9,7 +9,7 @@ const FASTAPI_URL = process.env.NEXT_PUBLIC_FASTAPI_URL || 'http://localhost:800
 
 interface UploadDropzoneProps {
   projectId: string;
-  onUpload: (files: File[]) => void;
+  onUpload: () => void;
   className?: string;
 }
 
@@ -68,7 +68,7 @@ export function UploadDropzone({ projectId, onUpload, className }: UploadDropzon
     const failed = results.filter(r => r.status === 'rejected').length;
     if (succeeded.length) {
       toast.success(`${succeeded.length} file(s) uploaded — processing in background`);
-      onUpload(succeeded);
+      onUpload();
     }
     if (failed) toast.error(`${failed} file(s) failed to upload`);
 

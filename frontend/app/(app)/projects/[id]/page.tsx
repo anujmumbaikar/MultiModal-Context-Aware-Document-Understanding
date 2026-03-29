@@ -83,30 +83,23 @@ export default function ProjectDashboard() {
     loadProject();
   }, [projectId]);
 
-  // 🔥 Poll ingestion jobs while on ingestion tab
+  // 🔥 Poll ingestion jobs every 2s while on ingestion tab
   useEffect(() => {
     if (activeSection !== "ingestion" || !projectId) return;
 
-    let active = true;
-
-    const poll = async () => {
-      if (!active) return;
+    // Fire immediately on tab enter, then every 2s
+    const fetchJobs = async () => {
       try {
         const res = await axios.get(`/api/projects/${projectId}/jobs`);
-        if (!active) return;
-        const updatedJobs = res.data;
-        setJobs(updatedJobs);
-        const allDone = updatedJobs.every((j: any) => j.progress >= 100);
-        if (!allDone) {
-          setTimeout(poll, 2000);
-        }
+        setJobs(res.data);
       } catch {
-        if (active) setTimeout(poll, 3000);
+        // silently retry next tick
       }
     };
 
-    poll();
-    return () => { active = false; };
+    fetchJobs();
+    const interval = setInterval(fetchJobs, 2000);
+    return () => clearInterval(interval);
   }, [activeSection, projectId]);
 
   // 🔥 Loading state (fixes flicker)
@@ -133,15 +126,7 @@ export default function ProjectDashboard() {
     );
   }
 
-  const handleUpload = async (files: File[]) => {
-    toast.success(`${files.length} file(s) uploaded — processing started`);
-    // Refresh jobs and navigate to ingestion tab
-    try {
-      const res = await axios.get(`/api/projects/${projectId}/jobs`);
-      setJobs(res.data);
-    } catch {
-      // ignore, polling will catch it
-    }
+  const handleUpload = () => {
     setActiveSection("ingestion");
   };
 

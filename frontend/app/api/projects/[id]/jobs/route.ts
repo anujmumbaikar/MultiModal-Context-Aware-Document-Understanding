@@ -18,7 +18,7 @@ export async function GET(
     const jobs = await prisma.ingestionJob.findMany({
       where: { projectId },
       include: {
-        stages: { orderBy: { createdAt: "asc" } },
+        stages: { orderBy: { id: "asc" } },
         logs: { orderBy: { timestamp: "asc" } },
       },
       orderBy: { createdAt: "desc" },
