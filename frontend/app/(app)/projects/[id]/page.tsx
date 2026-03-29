@@ -116,8 +116,8 @@ export default function ProjectDashboard() {
     toast.success("Document deleted");
   };
 
-  const handleSendChat = (content: string) => {
-    setChatMessages((prev) => [...prev, { role: "user", content }]);
+  const handleSendChat = (_content: string) => {
+    // Chat state is managed internally by ChatPanel
   };
 
   const handleDeleteProject = async () => {
@@ -226,7 +226,7 @@ export default function ProjectDashboard() {
           )}
 
           {activeSection === "upload" && (
-            <UploadDropzone onUpload={handleUpload} />
+            <UploadDropzone projectId={projectId} onUpload={handleUpload} />
           )}
 
           {activeSection === "ingestion" && (

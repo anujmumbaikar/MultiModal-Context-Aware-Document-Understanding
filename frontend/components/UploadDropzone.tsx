@@ -1,16 +1,21 @@
 import { useCallback, useState } from 'react';
-import { Upload, FileUp, X, CheckCircle2, Loader2 } from 'lucide-react';
+import { Upload, FileUp, X, CheckCircle2, Loader2, AlertCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
+import axios from 'axios';
+import { toast } from 'sonner';
+
+const FASTAPI_URL = process.env.NEXT_PUBLIC_FASTAPI_URL || 'http://localhost:8000';
 
 interface UploadDropzoneProps {
+  projectId: string;
   onUpload: (files: File[]) => void;
   className?: string;
 }
 
-export function UploadDropzone({ onUpload, className }: UploadDropzoneProps) {
+export function UploadDropzone({ projectId, onUpload, className }: UploadDropzoneProps) {
   const [isDragging, setIsDragging] = useState(false);
-  const [uploadedFiles, setUploadedFiles] = useState<{ file: File; status: 'queued' | 'uploading' | 'done' }[]>([]);
+  const [uploadedFiles, setUploadedFiles] = useState<{ file: File; status: 'queued' | 'uploading' | 'done' | 'error' }[]>([]);
 
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -32,14 +37,42 @@ export function UploadDropzone({ onUpload, className }: UploadDropzoneProps) {
     setUploadedFiles(prev => prev.filter((_, i) => i !== index));
   };
 
-  const handleUpload = () => {
-    const files = uploadedFiles.map(f => f.file);
-    setUploadedFiles(prev => prev.map(f => ({ ...f, status: 'uploading' })));
-    onUpload(files);
-    setTimeout(() => {
-      setUploadedFiles(prev => prev.map(f => ({ ...f, status: 'done' })));
-    }, 2000);
-    setTimeout(() => setUploadedFiles([]), 4000);
+  const handleUpload = async () => {
+    const queued = uploadedFiles.filter(f => f.status === 'queued');
+    if (!queued.length) return;
+
+    setUploadedFiles(prev => prev.map(f => f.status === 'queued' ? { ...f, status: 'uploading' } : f));
+
+    const results = await Promise.allSettled(
+      queued.map(async ({ file }) => {
+        const formData = new FormData();
+        formData.append('file', file);
+        await axios.post(`${FASTAPI_URL}/upload?project_id=${projectId}`, formData, {
+          headers: { 'Content-Type': 'multipart/form-data' },
+        });
+        return file;
+      })
+    );
+
+    const succeeded: File[] = [];
+    setUploadedFiles(prev => prev.map(item => {
+      const result = results[queued.findIndex(q => q.file === item.file)];
+      if (!result) return item;
+      if (result.status === 'fulfilled') {
+        succeeded.push(item.file);
+        return { ...item, status: 'done' };
+      }
+      return { ...item, status: 'error' };
+    }));
+
+    const failed = results.filter(r => r.status === 'rejected').length;
+    if (succeeded.length) {
+      toast.success(`${succeeded.length} file(s) uploaded — processing in background`);
+      onUpload(succeeded);
+    }
+    if (failed) toast.error(`${failed} file(s) failed to upload`);
+
+    setTimeout(() => setUploadedFiles(prev => prev.filter(f => f.status !== 'done')), 3000);
   };
 
   const formatSize = (bytes: number) => {
@@ -92,7 +125,8 @@ export function UploadDropzone({ onUpload, className }: UploadDropzoneProps) {
                 </button>
               )}
               {item.status === 'uploading' && <Loader2 className="h-4 w-4 text-muted-foreground animate-spin" />}
-              {item.status === 'done' && <CheckCircle2 className="h-4 w-4 text-success" />}
+              {item.status === 'done' && <CheckCircle2 className="h-4 w-4 text-green-500" />}
+              {item.status === 'error' && <AlertCircle className="h-4 w-4 text-destructive" />}
             </div>
           ))}
           {uploadedFiles.some(f => f.status === 'queued') && (

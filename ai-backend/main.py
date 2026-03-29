@@ -7,10 +7,18 @@ from fastapi import FastAPI, File, UploadFile, BackgroundTasks, HTTPException
 from pydantic import BaseModel
 import os
 import uuid
-
+from fastapi.middleware.cors import CORSMiddleware
+                                                                                 
 load_dotenv()
 client = OpenAI()
 app = FastAPI()
+
+app.add_middleware(                                             
+      CORSMiddleware,                                             
+      allow_origins=["http://localhost:3000"],
+      allow_methods=["*"],
+      allow_headers=["*"],
+  )
 
 embedding_model = OpenAIEmbeddings(
     model="text-embedding-3-large"
@@ -54,10 +62,14 @@ async def upload_file(
     project_upload_dir = get_project_upload_dir(project_id)
     file_path = f"{project_upload_dir}/{file_id}_{file.filename}"
 
-    with open(file_path, "wb") as f:
-        f.write(await file.read())
+    content = await file.read()
+    file_size = len(content)
+    file_type = file.content_type or "application/octet-stream"
 
-    background_tasks.add_task(ingest_file_to_vector_db, file_path, project_id)
+    with open(file_path, "wb") as f:
+        f.write(content)
+
+    background_tasks.add_task(ingest_file_to_vector_db, file_path, project_id, file_size, file_type)
 
     return {
         "message": "File uploaded, processing started",

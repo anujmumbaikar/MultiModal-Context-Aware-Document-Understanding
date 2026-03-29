@@ -2,9 +2,12 @@ import { useState, useRef, useEffect } from 'react';
 import { ChatMessage, Citation } from '@/types';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Send, Trash2, RotateCw, FileText, ChevronDown, ChevronUp, Bot, User, Copy, Check } from 'lucide-react';
+import { Send, Trash2, FileText, ChevronDown, ChevronUp, Bot, User, Copy, Check } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
+import axios from 'axios';
+
+const FASTAPI_URL = process.env.NEXT_PUBLIC_FASTAPI_URL || 'http://localhost:8000';
 
 interface ChatPanelProps {
   projectId: string;
@@ -58,7 +61,8 @@ function MessageActions({ content }: { content: string }) {
   );
 }
 
-export function ChatPanel({ projectId, messages, onSend, onClear }: ChatPanelProps) {
+export function ChatPanel({ projectId, messages: initialMessages, onSend, onClear }: ChatPanelProps) {
+  const [messages, setMessages] = useState<ChatMessage[]>(initialMessages);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -67,17 +71,48 @@ export function ChatPanel({ projectId, messages, onSend, onClear }: ChatPanelPro
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
   }, [messages]);
 
-  const handleSend = () => {
+  const handleSend = async () => {
     if (!input.trim() || isLoading) return;
     const query = input.trim();
     setInput('');
+
+    const userMessage: ChatMessage = {
+      id: crypto.randomUUID(),
+      projectId,
+      role: 'user',
+      content: query,
+      timestamp: new Date().toISOString(),
+    };
+
+    setMessages(prev => [...prev, userMessage]);
     onSend(query);
     setIsLoading(true);
 
-    setTimeout(() => {
-      onSend('__assistant__' + 'Based on the indexed documents in your project, here is a synthesized response to your query. The system analyzed relevant chunks across your document collection and identified key passages that address your question.');
+    try {
+      const res = await axios.post(`${FASTAPI_URL}/chat`, {
+        query,
+        project_id: projectId,
+      });
+
+      const assistantMessage: ChatMessage = {
+        id: crypto.randomUUID(),
+        projectId,
+        role: 'assistant',
+        content: res.data.answer,
+        timestamp: new Date().toISOString(),
+      };
+
+      setMessages(prev => [...prev, assistantMessage]);
+    } catch {
+      toast.error('Failed to get response. Please try again.');
+    } finally {
       setIsLoading(false);
-    }, 2000);
+    }
+  };
+
+  const handleClear = () => {
+    setMessages([]);
+    onClear();
   };
 
   return (
@@ -86,7 +121,7 @@ export function ChatPanel({ projectId, messages, onSend, onClear }: ChatPanelPro
       <div className="flex items-center justify-between px-4 py-3 border-b">
         <h3 className="text-sm font-medium">Chat</h3>
         <div className="flex gap-1">
-          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={onClear} title="Clear chat">
+          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={handleClear} title="Clear chat">
             <Trash2 className="h-3.5 w-3.5" />
           </Button>
         </div>
