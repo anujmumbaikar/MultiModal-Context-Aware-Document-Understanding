@@ -12,17 +12,17 @@ import uuid
 import requests
 import glob as file_glob
 from fastapi.middleware.cors import CORSMiddleware
-                                                                                 
+
 load_dotenv()
 client = OpenAI()
 app = FastAPI()
 
-app.add_middleware(                                             
-      CORSMiddleware,                                             
-      allow_origins=["http://localhost:3000"],
-      allow_methods=["*"],
-      allow_headers=["*"],
-  )
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 embedding_model = OpenAIEmbeddings(
     model="text-embedding-3-large"
@@ -122,7 +122,7 @@ async def chat_endpoint(request: ChatRequest):
             Caption: {res.metadata.get("caption")}
             Page Number: {res.metadata.get("page_number")}
             """
-                    for res in search_results
+        for res in search_results
     ])
 
     SYSTEM_PROMPT = f"""
@@ -169,7 +169,6 @@ async def serve_document(project_id: str, document_name: str):
     matches = file_glob.glob(os.path.join(project_dir, f"*_{document_name}"))
 
     if not matches:
-        # Fallback: exact filename match
         exact = os.path.join(project_dir, document_name)
         if os.path.exists(exact):
             return FileResponse(exact, content_disposition_type="inline")
@@ -186,10 +185,10 @@ async def delete_document_from_vector_db(document_id: str, request: DeleteDocume
 
         collection_name = f"project_{request.project_id}"
 
-        client = QdrantClient(url="http://localhost:6333")
+        qdrant = QdrantClient(url="http://localhost:6333")
 
         # Delete points where metadata.filename matches the document name
-        client.delete(
+        qdrant.delete(
             collection_name=collection_name,
             points_selector=Filter(
                 must=[

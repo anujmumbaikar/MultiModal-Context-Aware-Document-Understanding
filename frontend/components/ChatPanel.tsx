@@ -128,7 +128,7 @@ function DocumentViewer({
   onClose: () => void;
 }) {
   const docUrl = selectedDoc
-    ? `${FASTAPI_URL}/files/${projectId}/${encodeURIComponent(selectedDoc.name)}`
+    ? `/api/files/${projectId}/${encodeURIComponent(selectedDoc.name)}`
     : null;
 
   const isImage = selectedDoc?.fileType?.startsWith('image/');
@@ -267,7 +267,6 @@ export function ChatPanel({
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
   }, [messages]);
 
-  // Auto-show viewer when documents become available
   useEffect(() => {
     if (documents.length > 0 && !showDocViewer) {
       setShowDocViewer(true);
@@ -298,7 +297,6 @@ export function ChatPanel({
         project_id: projectId,
       });
 
-      // Save both messages to database
       const savedMessages = await axios.post(`/api/projects/${projectId}/chat`, {
         query,
         answer: res.data.answer,
@@ -314,7 +312,6 @@ export function ChatPanel({
         citations: savedMessages.data.assistantMessage.citations,
       };
 
-      // Replace optimistic user message with saved one and add assistant message
       setMessages(prev => {
         const withoutOptimisticUser = prev.filter(m => m.id !== userMessage.id);
         return [...withoutOptimisticUser,
@@ -330,7 +327,6 @@ export function ChatPanel({
       });
     } catch (error) {
       toast.error('Failed to get response. Please try again.');
-      // Remove optimistic user message on error
       setMessages(prev => prev.filter(m => m.id !== userMessage.id));
     } finally {
       setIsLoading(false);
@@ -350,9 +346,8 @@ export function ChatPanel({
 
   return (
     <div className="flex h-[calc(100vh-140px)] min-h-125 rounded-xl border bg-card overflow-hidden shadow-sm">
-      {/* ── Chat Panel ─────────────────────────────────── */}
+
       <div className="flex flex-col flex-1 min-w-0">
-        {/* Header */}
         <div className="flex items-center justify-between px-4 py-3 border-b bg-card/95 backdrop-blur-sm shrink-0">
           <div className="flex items-center gap-2.5">
             <div className="h-7 w-7 rounded-lg bg-primary/10 flex items-center justify-center">
@@ -387,7 +382,6 @@ export function ChatPanel({
           </div>
         </div>
 
-        {/* Messages */}
         <div ref={scrollRef} className="flex-1 overflow-y-auto p-4 space-y-6 scrollbar-thin scrollbar-thumb-border scrollbar-track-transparent">
           {messages.length === 0 && (
             <div className="flex flex-col items-center justify-center h-full text-center py-12">
@@ -472,7 +466,6 @@ export function ChatPanel({
           )}
         </div>
 
-        {/* Input */}
         <div className="p-4 border-t bg-card/95 backdrop-blur-sm shrink-0">
           <div className="flex gap-2 items-end">
             <div className="flex-1 relative">
@@ -504,7 +497,6 @@ export function ChatPanel({
         </div>
       </div>
 
-      {/* ── Document Viewer Panel ───────────────────────── */}
       {showDocViewer && documents.length > 0 && (
         <div className="w-150 shrink-0">
           <DocumentViewer

@@ -102,7 +102,9 @@ def ingest_file_to_vector_db(file_path, project_id: str = None, file_size: int =
     if not project_id:
         project_id = "default"
 
-    filename = os.path.basename(file_path)
+    # Files are stored as {uuid}_{original_filename}; extract the original name
+    _basename = os.path.basename(file_path)
+    filename = _basename.split("_", 1)[1] if "_" in _basename else _basename
 
     # Stage 1: upload_received → completed
     update_stage(project_id, job_id, "upload_received", "completed", "File received and saved to disk")

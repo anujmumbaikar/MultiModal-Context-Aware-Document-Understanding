@@ -1,133 +1,248 @@
-import base64
-from openai import OpenAI
+import json
+import mimetypes
+import os
+import time
+
 from dotenv import load_dotenv
-from unstructured.documents.elements import Text,Element,FigureCaption,Image,Table,CompositeElement
-from unstructured.chunking.title import chunk_by_title
-from unstructured.partition.auto import partition
+from openai import OpenAI
+from unstructured_client import UnstructuredClient
+from unstructured_client.models.operations import CreateJobRequest, DownloadJobOutputRequest
+from unstructured_client.models.shared import BodyCreateJob, InputFiles
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+
 load_dotenv()
 
-client = OpenAI()
+openai_client = OpenAI()
+unstructured = UnstructuredClient(api_key_auth=os.getenv("UNSTRUCTURED_API_KEY"))
 
-def process_images_with_caption(raw_chunks,use_openai=True):
-    processed_image = []
-    for idx, chunk in enumerate(raw_chunks):
-        if isinstance(chunk, Image):
-            # the next element after the image will be figure caption
-            if idx + 1 < len(raw_chunks) and isinstance(raw_chunks[idx + 1], FigureCaption):
-                caption = raw_chunks[idx + 1].text
-            else:
-                caption = "No caption found"
+OUTPUT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "unstructured_output")
+os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-            image_data = {
-                # "index": idx, no need of index , when we will put into vector database 
-                # we can take anything which we feel it is best for retrival
-                "caption": caption if caption else "No caption found",
-                "image_text": chunk.text,
-                "base64": chunk.metadata.image_base64,
-                "page_number": chunk.metadata.page_number,
-                "content":chunk.text,
-                "content_type": "image",
-                "filename": chunk.metadata.filename
-            }
-            if use_openai:
-                prompt = f"""
-                Generate and describe the image in detail. 
-                The caption of image is {image_data['caption']} and the image text is {image_data['image_text']}
-                Directly analyze the image and provide a detailed description without any additional text.
-                max characters should be 100-150 words.
-
-                """
-                response = client.chat.completions.create(
-                    model="gpt-4.1",
-                    messages=[
-                        {
-                            "role": "user",
-                            "content": [
-                                {"type": "text", "text": prompt},
-                                {
-                                    "type": "image_url",
-                                    "image_url": {"url": f"data:image/png;base64,{image_data['base64']}"},
-                                },
-                            ],
-                        }
-                    ],
-                )
-                image_data["content"] = response.choices[0].message.content
-            processed_image.append(image_data)
-    return processed_image
+TEXT_ELEMENT_TYPES = {
+    "Title", "NarrativeText", "Text", "ListItem",
+    "UncategorizedText", "Header", "Footer", "EmailAddress",
+}
 
 
 
-def process_tables_with_description(raw_chunks,use_openai=True):
-    processed_tables = []
-    for idx , element in enumerate(raw_chunks):
-        if isinstance(element, Table):
-            table_data = {
-                "table_as_html":element.metadata.text_as_html,
-                "table_text": element.text,
-                "content": element.text,
-                "content_type": "table",
-                "filename": element.metadata.filename,
-                "page_number": element.metadata.page_number
-            }
-            if use_openai:
-                prompt = f"""
-                    Generate and describe the table in detailed descriptiton of its contents , includding the strucutre, 
-                    key data points , notable treands or insights 
-                    The table is {table_data['table_as_html']}
-                    Directly analyze the table and provide a detailed description without any additional text.
-                    max characters should be 100-150 words.
-                    """
-                response = client.chat.completions.create(
-                        model="gpt-4.1",
-                        messages=[
-                            {
-                                "role": "user",
-                                "content": prompt,
-                            }
-                        ],
+# upload → create job → poll → download
+def partition_via_api(file_path: str) -> list[dict]:
+    """
+    Sends a file to the Unstructured on-demand Jobs API with the
+    'hi_res_and_enrichment' workflow template.
+    Blocks until the job completes, then returns the list of elements.
+    """
+    filename = os.path.basename(file_path)
+    content_type = mimetypes.guess_type(file_path)[0] or "application/octet-stream"
+
+    with open(file_path, "rb") as f:
+        file_bytes = f.read()
+
+    # --- Create job ---
+    print(f"[Unstructured API] Creating job for: {filename}")
+    create_resp = unstructured.jobs.create_job(
+        request=CreateJobRequest(
+            body_create_job=BodyCreateJob(
+                request_data=json.dumps({"template_id": "hi_res_and_enrichment"}),
+                input_files=[
+                    InputFiles(
+                        content=file_bytes,
+                        file_name=filename,
+                        content_type=content_type,
                     )
-                table_data["content"] = response.choices[0].message.content
-            processed_tables.append(table_data)
-    return processed_tables
-
-def process_text_chunks(raw_chunks):
-    processed_texts = []
-
-    chunks = chunk_by_title(
-        elements=[chunk for chunk in raw_chunks if isinstance(chunk, Text)],
-        new_after_n_chars=1500,
-        max_characters=2000,
-        combine_text_under_n_chars=500,
+                ],
+            )
+        )
     )
-    for chunk in chunks:
-        text_data = {
-            "content": chunk.text,
-            "content_type": "text",
-            "filename": chunk.metadata.filename,
-            "page_number": chunk.metadata.page_number
+
+    job_id = create_resp.job_information.id
+    file_ids = create_resp.job_information.input_file_ids
+    print(f"[Unstructured API] Job created: {job_id}  (files: {file_ids})")
+
+    # --- Poll until COMPLETED / FAILED ---
+    while True:
+        poll_resp = unstructured.jobs.get_job(request={"job_id": job_id})
+        status = poll_resp.job_information.status
+        print(f"[Unstructured API] Job status: {status}")
+        if status in ("SCHEDULED", "IN_PROGRESS"):
+            time.sleep(10)
+        else:
+            break
+
+    if status != "COMPLETED":
+        raise RuntimeError(
+            f"[Unstructured API] Job {job_id} ended with status: {status}"
+        )
+
+    all_elements: list[dict] = []
+    for file_id in file_ids:
+        dl_resp = unstructured.jobs.download_job_output(
+            request=DownloadJobOutputRequest(job_id=job_id, file_id=file_id)
+        )
+        elements = dl_resp.any if isinstance(dl_resp.any, list) else []
+
+        # Cache locally for inspection / replay
+        cache_path = os.path.join(OUTPUT_DIR, f"{job_id}_{file_id}.json")
+        with open(cache_path, "w") as out:
+            json.dump(elements, out, indent=2)
+        print(f"[Unstructured API] Cached output → {cache_path}")
+
+        all_elements.extend(elements)
+
+    print(f"[Unstructured API] Total elements downloaded: {len(all_elements)}")
+    return all_elements
+
+def process_images_with_caption(
+    raw_elements: list[dict], use_openai: bool = True
+) -> list[dict]:
+    processed = []
+
+    for idx, elem in enumerate(raw_elements):
+        if elem.get("type") != "Image":
+            continue
+
+        # The FigureCaption element usually immediately follows the Image element
+        caption = "No caption found"
+        if (
+            idx + 1 < len(raw_elements)
+            and raw_elements[idx + 1].get("type") == "FigureCaption"
+        ):
+            caption = raw_elements[idx + 1].get("text") or "No caption found"
+
+        metadata = elem.get("metadata", {})
+        image_base64 = metadata.get("image_base64", "")
+
+        image_data = {
+            "caption": caption,
+            "image_text": elem.get("text", ""),
+            "base64": image_base64,
+            "page_number": metadata.get("page_number"),
+            "content": elem.get("text", "") or caption,
+            "content_type": "image",
+            "filename": metadata.get("filename", ""),
         }
-        processed_texts.append(text_data)   
-    return processed_texts
+
+        if use_openai and image_base64:
+            prompt = (
+                f"Generate and describe the image in detail. "
+                f"The caption of image is {caption} and the image text is {image_data['image_text']}. "
+                f"Directly analyze the image and provide a detailed description without any additional text. "
+                f"max characters should be 100-150 words."
+            )
+            resp = openai_client.chat.completions.create(
+                model="gpt-4.1",
+                messages=[
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": prompt},
+                            {
+                                "type": "image_url",
+                                "image_url": {
+                                    "url": f"data:image/png;base64,{image_base64}"
+                                },
+                            },
+                        ],
+                    }
+                ],
+            )
+            image_data["content"] = resp.choices[0].message.content
+        elif not image_base64:
+            # No base64 available – fall back to caption + element text
+            image_data["content"] = f"{caption}. {elem.get('text', '')}".strip(". ")
+
+        processed.append(image_data)
+
+    return processed
 
 
-def get_all_chunks(file_path):
-    print(f"Extracting raw chunks from the document")
-    raw_chunks = partition(
-        filename=file_path,
-        strategy="hi_res",
-        infer_table_structure=True,
-        extract_image_block_types=["figure", "table", "Image"],
-        extract_image_block_to_payload=True,
+def process_tables_with_description(
+    raw_elements: list[dict], use_openai: bool = True
+) -> list[dict]:
+    processed = []
+
+    for elem in raw_elements:
+        if elem.get("type") != "Table":
+            continue
+
+        metadata = elem.get("metadata", {})
+        table_html = metadata.get("text_as_html", "")
+
+        table_data = {
+            "table_as_html": table_html,
+            "table_text": elem.get("text", ""),
+            "content": elem.get("text", ""),
+            "content_type": "table",
+            "filename": metadata.get("filename", ""),
+            "page_number": metadata.get("page_number"),
+        }
+
+        if use_openai and table_html:
+            prompt = (
+                f"Generate and describe the table in detailed description of its contents, "
+                f"including the structure, key data points, notable trends or insights. "
+                f"The table is {table_html}. "
+                f"Directly analyze the table and provide a detailed description without any additional text. "
+                f"max characters should be 100-150 words."
+            )
+            resp = openai_client.chat.completions.create(
+                model="gpt-4.1",
+                messages=[{"role": "user", "content": prompt}],
+            )
+            table_data["content"] = resp.choices[0].message.content
+
+        processed.append(table_data)
+
+    return processed
+
+
+def process_text_chunks(raw_elements: list[dict]) -> list[dict]:
+    splitter = RecursiveCharacterTextSplitter(
+        chunk_size=2000,
+        chunk_overlap=200,
     )
-    print(f"Image processing started")
-    images = process_images_with_caption(raw_chunks)
-    print(f"Table processing started")
-    tables = process_tables_with_description(raw_chunks)
-    print(f"Text processing started")
-    texts = process_text_chunks(raw_chunks)
-    print(f"Processing completed for all chunk types")
+    processed = []
 
-    print(f"Total {len(images)} images, {len(tables)} tables and {len(texts)} text chunks processed from the document")
+    for elem in raw_elements:
+        if elem.get("type") not in TEXT_ELEMENT_TYPES:
+            continue
+        text = (elem.get("text") or "").strip()
+        if not text:
+            continue
+
+        metadata = elem.get("metadata", {})
+        filename = metadata.get("filename", "")
+        page_number = metadata.get("page_number")
+
+        sub_texts = splitter.split_text(text) if len(text) > 2000 else [text]
+        for chunk in sub_texts:
+            processed.append({
+                "content": chunk,
+                "content_type": "text",
+                "filename": filename,
+                "page_number": page_number,
+            })
+
+    return processed
+
+def get_all_chunks(file_path: str) -> list[dict]:
+    print("Sending file to Unstructured API for processing...")
+    raw_elements = partition_via_api(file_path)
+    print(f"Received {len(raw_elements)} raw elements from API")
+
+    print("Image processing started")
+    images = process_images_with_caption(raw_elements)
+
+    print("Table processing started")
+    tables = process_tables_with_description(raw_elements)
+
+    print("Text processing started")
+    texts = process_text_chunks(raw_elements)
+
+    print("Processing completed for all chunk types")
+    print(
+        f"Total {len(images)} images, {len(tables)} tables "
+        f"and {len(texts)} text chunks processed from the document"
+    )
 
     return images + tables + texts
