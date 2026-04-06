@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { useRouter, useParams } from "next/navigation";
+import { motion } from "framer-motion";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -158,68 +159,78 @@ export default function ProjectDashboard() {
   return (
     <div className="min-h-screen flex bg-background">
       {/* Sidebar */}
-      <aside className="w-56 border-r bg-card flex flex-col">
-        <div className="p-4 border-b">
+      <aside className="w-56 border-r border-border/50 bg-card/50 backdrop-blur-xl flex flex-col">
+        <div className="p-4 border-b border-border/50">
           <Button
             variant="ghost"
             onClick={() => router.push("/")}
-            className="text-muted-foreground"
+            className="text-muted-foreground hover:text-foreground"
           >
             <ArrowLeft className="h-4 w-4 mr-2" />
             Projects
           </Button>
         </div>
 
-        <div className="p-4 border-b">
+        <div className="p-4 border-b border-border/50">
           <div className="flex items-center gap-2">
-            <div className="h-8 w-8 bg-primary rounded flex items-center justify-center">
-              <Brain className="h-4 w-4 text-white" />
+            <div className="h-8 w-8 rounded-lg bg-gradient-to-br from-primary/20 to-primary/5 flex items-center justify-center">
+              <Brain className="h-4 w-4 text-primary" />
             </div>
             <div>
-              <div className="text-sm font-medium">{project.name}</div>
+              <div className="text-sm font-semibold">{project.name}</div>
               <StatusBadge status={project.status} />
             </div>
           </div>
         </div>
 
-        <nav className="p-2 space-y-1">
-          {NAV_ITEMS.map((item) => (
-            <button
-              key={item.key}
-              onClick={() => setActiveSection(item.key)}
-              className={cn(
-                "w-full flex items-center gap-2 px-3 py-2 rounded text-sm",
-                activeSection === item.key
-                  ? "bg-secondary font-medium"
-                  : "text-muted-foreground"
-              )}
-            >
-              <item.icon className="h-4 w-4" />
-              {item.label}
-            </button>
-          ))}
+        <nav className="p-2 space-y-1 flex-1">
+          {NAV_ITEMS.map((item) => {
+            const Icon = item.icon;
+            const isActive = activeSection === item.key;
+            return (
+              <motion.button
+                key={item.key}
+                onClick={() => setActiveSection(item.key)}
+                whileHover={{ x: 4 }}
+                whileTap={{ scale: 0.98 }}
+                className={cn(
+                  "w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-sm transition-all",
+                  isActive
+                    ? "bg-secondary/80 text-foreground font-medium shadow-sm"
+                    : "text-muted-foreground hover:text-foreground hover:bg-secondary/30"
+                )}
+              >
+                <Icon className={cn("h-4 w-4", isActive && "text-primary")} />
+                {item.label}
+              </motion.button>
+            );
+          })}
         </nav>
       </aside>
 
       {/* Main */}
-      <div className="flex-1">
-        <header className="border-b p-4 flex justify-between">
+      <div className="flex-1 flex flex-col">
+        <header className="border-b border-border/50 p-4 flex justify-between items-center bg-card/30 backdrop-blur-sm">
           <div>
-            <h1 className="font-semibold">{project.name}</h1>
+            <h1 className="font-semibold text-lg">{project.name}</h1>
             <p className="text-xs text-muted-foreground">
               {project.domain}
             </p>
           </div>
 
-          <Button onClick={() => setActiveSection("upload")}>
-            <Upload className="h-4 w-4 mr-2" />
+          <Button onClick={() => setActiveSection("upload")} className="gap-2 rounded-xl shadow-lg">
+            <Upload className="h-4 w-4" />
             Upload
           </Button>
         </header>
 
-        <main className={cn('p-6', activeSection !== 'chat' && 'max-w-4xl')}>
+        <main className={cn('p-6 flex-1 overflow-y-auto', activeSection !== 'chat' && 'max-w-5xl mx-auto w-full')}>
           {activeSection === "overview" && (
-            <div className="space-y-6">
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="space-y-6"
+            >
               <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
                 <StatsCard
                   title="Documents"
@@ -243,15 +254,15 @@ export default function ProjectDashboard() {
                 />
               </div>
 
-              <Card>
+              <Card className="border-border/50 bg-card/50 backdrop-blur-sm">
                 <CardHeader>
-                  <CardTitle>Details</CardTitle>
+                  <CardTitle className="text-lg">Project Details</CardTitle>
                 </CardHeader>
                 <CardContent>
-                  <p>{project.description}</p>
+                  <p className="text-muted-foreground leading-relaxed">{project.description}</p>
                 </CardContent>
               </Card>
-            </div>
+            </motion.div>
           )}
 
           {activeSection === "upload" && (
