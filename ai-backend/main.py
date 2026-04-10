@@ -12,6 +12,7 @@ import uuid
 import requests
 import glob as file_glob
 from fastapi.middleware.cors import CORSMiddleware
+from typing import Optional
 
 load_dotenv()
 client = OpenAI()
@@ -48,7 +49,7 @@ def get_project_upload_dir(project_id: str) -> str:
     os.makedirs(project_dir, exist_ok=True)
     return project_dir
 
-def create_ingestion_job(project_id: str, filename: str) -> str | None:
+def create_ingestion_job(project_id: str, filename: str) -> Optional[str]:
     """Create an IngestionJob in Postgres via Next.js API and return its id."""
     nextjs_url = os.getenv("NEXTJS_URL", "http://localhost:3000")
     try:

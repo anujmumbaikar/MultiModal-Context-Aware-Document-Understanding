@@ -1,5 +1,4 @@
 # ingestion.py
-
 from langchain_qdrant import QdrantVectorStore
 from langchain_openai import OpenAIEmbeddings
 from langchain_core.documents import Document

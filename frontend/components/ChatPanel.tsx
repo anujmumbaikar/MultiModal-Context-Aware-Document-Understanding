@@ -1,4 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { ChatMessage, Citation, Document } from '@/types';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -523,7 +525,15 @@ export function ChatPanel({
                         ? 'bg-primary text-primary-foreground rounded-tr-md border-primary/20'
                         : 'bg-secondary/40 rounded-tl-md border-border/40'
                     )}>
-                      <div className="whitespace-pre-wrap">{msg.content}</div>
+                      {msg.role === 'assistant' ? (
+                        <div className="prose prose-sm dark:prose-invert max-w-none [&_h1]:text-sm [&_h2]:text-sm [&_h3]:text-sm [&_h4]:text-sm [&_h5]:text-sm [&_h6]:text-sm [&_p]:text-sm [&_ul]:text-sm [&_ol]:text-sm [&_li]:text-sm [&_strong]:text-sm [&_em]:text-sm [&_code]:text-sm [&_pre]:text-sm">
+                          <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                            {msg.content}
+                          </ReactMarkdown>
+                        </div>
+                      ) : (
+                        <div className="whitespace-pre-wrap">{msg.content}</div>
+                      )}
                       {msg.role === 'assistant' && <MessageActions content={msg.content} />}
                       {msg.citations && msg.citations.length > 0 && (
                         <SourcesPanel citations={msg.citations} />
