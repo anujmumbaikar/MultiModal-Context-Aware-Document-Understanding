@@ -2,13 +2,30 @@
 
 An intelligent document understanding system that extracts text, images, and tables from documents, generates embeddings, and provides AI-powered question-answering capabilities.
 
+Overcomes traditional RAG limitations by going beyond text-only retrieval to capture complete document insights.
+
+## Pipeline
+
+![Image Table Processing Pipeline](screenshots/ImageTableProcessingPipeline.png)
+
 ## Features
 
 ### Document Processing
 - **Text Extraction**: Automatically extracts and chunks text content from uploaded documents
 - **Image Captioning**: Detects images in documents and generates detailed descriptions using GPT-4
 - **Table Understanding**: Identifies tables and generates detailed descriptions of their structure and insights
-- **Smart Chunking**: Processes documents into optimized chunks for retrieval
+
+### Pros and Cons
+
+**Pros:**
+- **Separated Metadata**: Images and tables have dedicated metadata fields, enabling precise filtering and targeted queries
+- **Easy to Implement**:  A straightforward pipeline.
+- **Rich Context**: Image captions and table descriptions add meaningful context to vector search results
+- **Source Traceability**: Every retrieved chunk includes metadata (filename, page number, element type) for easy verification
+
+**Cons:**
+- **Cost for Image-Heavy PDFs**: Documents with many images require multiple GPT-4 calls for captioning, which can become expensive
+- **Processing Time**: Image and table analysis adds latency to the ingestion pipeline (Imagine if we have to ingest 1000-3000pages documents)
 
 ### AI Capabilities
 - **Semantic Search**: Find relevant content across all uploaded documents using vector embeddings
@@ -16,19 +33,11 @@ An intelligent document understanding system that extracts text, images, and tab
 - **Source Citations**: Every answer includes references to the original source documents
 - **Multi-Format Support**: Works with PDFs, text files, CSVs, HTML, and more
 
-### User Interface
-- **Modern Chat Interface**: Clean, responsive UI built with React and Tailwind CSS
-- **Document Viewer**: Preview uploaded documents directly in the browser
-- **Real-time Processing**: Live status updates during document ingestion
-- **Dark Mode Support**: Full theming support with next-themes
-
 ## Tech Stack
 
 ### Frontend
 - **Next.js 16** - React framework with App Router
-- **React 19** - UI library
 - **TypeScript** - Type safety
-- **Tailwind CSS v4** - Styling with @tailwindcss/typography plugin
 - **shadcn/ui** - UI components built on Radix UI
 - **Framer Motion** - Animations
 - **React Markdown** - Markdown rendering for AI responses
@@ -86,7 +95,7 @@ upload_received → chunking → embeddings → vector_storage → ready
 
 **Chunking Stage:**
 - Document sent to Unstructured API for element extraction
-- Text elements are split into 2000-character chunks with 200-character overlap
+- Text elements are split into 1000-character chunks with 200-character overlap
 - Images are extracted with captions and analyzed by GPT-4
 - Tables are converted to HTML and described by GPT-4
 
@@ -185,31 +194,3 @@ Navigate to `http://localhost:3000`
 | POST | `/chat` | Send a question and get AI-powered answer |
 | GET | `/files/{project_id}/{document_name}` | Serve document files |
 | DELETE | `/documents/{document_id}/delete` | Delete document from vector DB |
-
-## Key Components
-
-### `chunking.py`
-- `partition_via_api()`: Sends files to Unstructured API for element extraction
-- `process_images_with_caption()`: Extracts and describes images using GPT-4
-- `process_tables_with_description()`: Analyzes tables and generates insights
-- `process_text_chunks()`: Splits text into retrievable chunks
-
-### `ingestion.py`
-- `ingest_file_to_vector_db()`: Orchestrates the full ingestion pipeline
-- `update_stage()`: Updates job status for real-time frontend feedback
-- `store_in_qdrant()`: Stores embedded chunks in vector database
-
-### `main.py` (FastAPI)
-- `/upload`: Handles file uploads and triggers background ingestion
-- `/chat`: Retrieves relevant context and generates AI responses
-- `/files/{project_id}/{document_name}`: Serves uploaded documents
-
-### `ChatPanel.tsx` (Frontend)
-- Real-time chat interface with AI assistant
-- Document viewer with resizable panels
-- Citation display with relevance scores
-- Markdown rendering for formatted responses
-
-## License
-
-This project is for educational purposes as part of a college mini-project.

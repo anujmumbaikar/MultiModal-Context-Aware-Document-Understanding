@@ -208,7 +208,7 @@ def process_tables_with_description(
 
 def process_text_chunks(raw_elements: list[dict]) -> list[dict]:
     splitter = RecursiveCharacterTextSplitter(
-        chunk_size=2000,
+        chunk_size=1000,
         chunk_overlap=200,
     )
     processed = []
@@ -224,7 +224,7 @@ def process_text_chunks(raw_elements: list[dict]) -> list[dict]:
         filename = metadata.get("filename", "")
         page_number = metadata.get("page_number")
 
-        sub_texts = splitter.split_text(text) if len(text) > 2000 else [text]
+        sub_texts = splitter.split_text(text) if len(text) > 1000 else [text]
         for chunk in sub_texts:
             processed.append({
                 "content": chunk,

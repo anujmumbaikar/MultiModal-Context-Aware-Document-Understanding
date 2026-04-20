@@ -310,12 +310,7 @@ poetry.toml
 # LSP config files
 pyrightconfig.json
 
-frontend/.claude
-claude.txt
 ai-backend/uploaded_files/
 ai-backend/unstructured_output/
-ai-backend/main0.py
-.claude
-
 ai-backend/research_codes/
 # End of https://www.toptal.com/developers/gitignore/api/python,node
