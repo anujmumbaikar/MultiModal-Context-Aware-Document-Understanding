@@ -2,11 +2,12 @@ from ingestion import ingest_file_to_vector_db
 from langchain_qdrant import QdrantVectorStore, RetrievalMode
 from qdrant_client import QdrantClient
 from embeddings import embedding_model, sparse_embeddings
-from openai import OpenAI
+from openai import OpenAI, AsyncOpenAI
 from dotenv import load_dotenv
 from fastapi import FastAPI, File, UploadFile, BackgroundTasks, HTTPException
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
+import json
 import os
 import uuid
 import requests
@@ -16,6 +17,7 @@ from typing import Optional
 
 load_dotenv()
 client = OpenAI()
+async_client = AsyncOpenAI()
 
 QDRANT_URL = "https://9219ef2c-5862-409f-93ef-f0808298aad3.eu-west-2-0.aws.cloud.qdrant.io"
 QDRANT_API_KEY = os.getenv("QDRANT_API_KEY")
@@ -28,9 +30,14 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+class Message(BaseModel):
+    role: str
+    content: str
+
 class ChatRequest(BaseModel):
     query: str
     project_id: str
+    messages: list[Message] = []
 
 class UploadRequest(BaseModel):
     project_id: str
@@ -153,17 +160,28 @@ async def chat_endpoint(request: ChatRequest):
             {context}
     """
 
-    response = client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=[
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": query}
-        ],
-    )
+    messages = [
+        {"role": "system", "content": SYSTEM_PROMPT},
+        *[{"role": m.role, "content": m.content} for m in request.messages],
+        {"role": "user", "content": query},
+    ]
 
-    return {
-        "answer": response.choices[0].message.content
-    }
+    async def generate():
+        try:
+            stream = await async_client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=messages,
+                stream=True,
+            )
+            async for chunk in stream:
+                token = chunk.choices[0].delta.content
+                if token:
+                    yield f"data: {json.dumps({'token': token})}\n\n"
+            yield "data: [DONE]\n\n"
+        except Exception as e:
+            yield f"data: {json.dumps({'error': str(e)})}\n\n"
+
+    return StreamingResponse(generate(), media_type="text/event-stream")
 
 
 @app.get("/files/{project_id}/{document_name:path}")
