@@ -9,9 +9,10 @@ import requests
 
 load_dotenv()
 
-embedding_model = OpenAIEmbeddings(
-    model="text-embedding-3-large"
-)
+QDRANT_API_KEY = os.getenv("QDRANT_API_KEY")
+
+embedding_model = OpenAIEmbeddings(model="text-embedding-3-large")
+
 
 def prepare_chunks_for_ingestion(chunks):
     processed_chunks = []
@@ -51,14 +52,21 @@ def convert_to_documents(chunks):
     return docs
 
 
+QDRANT_URL = "https://9219ef2c-5862-409f-93ef-f0808298aad3.eu-west-2-0.aws.cloud.qdrant.io"
+
+
 def store_in_qdrant(docs, project_id: str):
     collection_name = f"project_{project_id}"
+    print(f"[Qdrant] Uploading {len(docs)} chunks to '{collection_name}'...")
     vector_store = QdrantVectorStore.from_documents(
         documents=docs,
         embedding=embedding_model,
-        url="http://localhost:6333",
+        url=QDRANT_URL,
         collection_name=collection_name,
+        api_key=QDRANT_API_KEY,
+        timeout=300,
     )
+    print(f"[Qdrant] Done — {len(docs)} chunks stored.")
     return vector_store
 
 
@@ -97,27 +105,39 @@ def notify_ingest_complete(project_id: str, filename: str, file_type: str, file_
         print(f"Warning: failed to notify Next.js backend: {e}")
 
 
-def ingest_file_to_vector_db(file_path, project_id: str = None, file_size: int = 0, file_type: str = "unknown", job_id: str = None):
+def ingest_file_to_vector_db(
+    file_path,
+    project_id: str = None,
+    file_size: int = 0,
+    file_type: str = "unknown",
+    job_id: str = None,
+    process_images: bool = False,
+    process_tables: bool = False,
+):
     if not project_id:
         project_id = "default"
 
-    # Files are stored as {uuid}_{original_filename}; extract the original name
     _basename = os.path.basename(file_path)
     filename = _basename.split("_", 1)[1] if "_" in _basename else _basename
 
-    # Stage 1: upload_received → completed
+    print(f"\n{'='*60}")
+    print(f"[Ingest] Starting: {filename}")
+    print(f"[Ingest] images={process_images}  tables={process_tables}")
+    print(f"{'='*60}")
+
+    # Stage 1: upload_received
     update_stage(project_id, job_id, "upload_received", "completed", "File received and saved to disk")
 
     # Stage 2: chunking
     update_stage(project_id, job_id, "chunking", "running", "Extracting and chunking document content...")
-    chunks = get_all_chunks(file_path)
+    chunks = get_all_chunks(file_path, process_images=process_images, process_tables=process_tables)
     processed_chunks = prepare_chunks_for_ingestion(chunks)
     total_chunks = len(processed_chunks)
     page_numbers = [c.get("page_number") for c in processed_chunks if c.get("page_number")]
     total_pages = max(page_numbers) if page_numbers else 0
     update_stage(project_id, job_id, "chunking", "completed", f"Created {total_chunks} chunks across {total_pages} pages")
 
-    # Stage 3: embeddings (generated inside store_in_qdrant)
+    # Stage 3: embeddings + vector storage
     update_stage(project_id, job_id, "embeddings", "running", "Generating vector embeddings...")
     docs = convert_to_documents(processed_chunks)
     store_in_qdrant(docs, project_id)
@@ -132,4 +152,4 @@ def ingest_file_to_vector_db(file_path, project_id: str = None, file_size: int =
 
     notify_ingest_complete(project_id, filename, file_type, file_size, total_chunks, total_pages)
 
-    
+    print(f"\n[Ingest] Complete — {filename} ({total_chunks} chunks, {total_pages} pages)")

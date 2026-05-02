@@ -2,12 +2,11 @@
 
 import { useCallback, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Upload, FileUp, X, CheckCircle2, Loader2, AlertCircle, CloudUpload } from "lucide-react";
+import { Upload, FileUp, X, CheckCircle2, Loader2, AlertCircle, CloudUpload, Image, Table2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import axios from "axios";
 import { toast } from "sonner";
-import { FileUpload } from "@/components/ui/file-upload";
 
 const FASTAPI_URL = process.env.NEXT_PUBLIC_FASTAPI_URL || "http://localhost:8000";
 
@@ -20,6 +19,8 @@ interface UploadDropzoneProps {
 export function UploadDropzone({ projectId, onUpload, className }: UploadDropzoneProps) {
   const [isDragging, setIsDragging] = useState(false);
   const [uploadedFiles, setUploadedFiles] = useState<{ file: File; status: "queued" | "uploading" | "done" | "error" }[]>([]);
+  const [processImages, setProcessImages] = useState(false);
+  const [processTables, setProcessTables] = useState(false);
 
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -49,11 +50,13 @@ export function UploadDropzone({ projectId, onUpload, className }: UploadDropzon
       prev.map((f) => (f.status === "queued" ? { ...f, status: "uploading" } : f))
     );
 
+    const url = `${FASTAPI_URL}/upload?project_id=${projectId}&process_images=${processImages}&process_tables=${processTables}`;
+
     const results = await Promise.allSettled(
       queued.map(async ({ file }) => {
         const formData = new FormData();
         formData.append("file", file);
-        await axios.post(`${FASTAPI_URL}/upload?project_id=${projectId}`, formData, {
+        await axios.post(url, formData, {
           headers: { "Content-Type": "multipart/form-data" },
         });
         return file;
@@ -164,6 +167,58 @@ export function UploadDropzone({ projectId, onUpload, className }: UploadDropzon
           </div>
         </div>
       </motion.div>
+
+      {/* Processing options */}
+      <div
+        className="rounded-xl border border-border/50 bg-card/30 px-4 py-3 space-y-2"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+          Extraction options
+        </p>
+        <div className="flex flex-col gap-2 sm:flex-row sm:gap-6">
+          <label className="flex items-center gap-2.5 cursor-pointer group">
+            <input
+              type="checkbox"
+              checked={processImages}
+              onChange={(e) => setProcessImages(e.target.checked)}
+              className="h-4 w-4 rounded accent-primary cursor-pointer"
+            />
+            <Image className="h-3.5 w-3.5 text-muted-foreground group-hover:text-foreground transition-colors" />
+            <span className="text-sm select-none group-hover:text-foreground transition-colors">
+              Extract &amp; caption images
+            </span>
+            {processImages && (
+              <span className="text-[10px] bg-amber-500/15 text-amber-500 border border-amber-500/20 px-1.5 py-0.5 rounded-full font-medium">
+                slower
+              </span>
+            )}
+          </label>
+
+          <label className="flex items-center gap-2.5 cursor-pointer group">
+            <input
+              type="checkbox"
+              checked={processTables}
+              onChange={(e) => setProcessTables(e.target.checked)}
+              className="h-4 w-4 rounded accent-primary cursor-pointer"
+            />
+            <Table2 className="h-3.5 w-3.5 text-muted-foreground group-hover:text-foreground transition-colors" />
+            <span className="text-sm select-none group-hover:text-foreground transition-colors">
+              Extract &amp; describe tables
+            </span>
+            {processTables && (
+              <span className="text-[10px] bg-amber-500/15 text-amber-500 border border-amber-500/20 px-1.5 py-0.5 rounded-full font-medium">
+                slower
+              </span>
+            )}
+          </label>
+        </div>
+        {(processImages || processTables) && (
+          <p className="text-[11px] text-muted-foreground">
+            Each image/table requires a GPT-4 API call. Large documents will take significantly longer.
+          </p>
+        )}
+      </div>
 
       {/* File list */}
       <AnimatePresence>

@@ -16,6 +16,9 @@ from typing import Optional
 
 load_dotenv()
 client = OpenAI()
+
+QDRANT_URL = "https://9219ef2c-5862-409f-93ef-f0808298aad3.eu-west-2-0.aws.cloud.qdrant.io"
+QDRANT_API_KEY = os.getenv("QDRANT_API_KEY")
 app = FastAPI()
 
 app.add_middleware(
@@ -65,19 +68,21 @@ def create_ingestion_job(project_id: str, filename: str) -> Optional[str]:
 
 
 def get_vector_db_for_project(project_id: str) -> QdrantVectorStore:
-    """Get or create vector store for a specific project."""
     collection_name = f"project_{project_id}"
-    return QdrantVectorStore.from_existing_collection(
-        embedding=embedding_model,
-        url="http://localhost:6333",
+    qdrant_client = QdrantClient(url=QDRANT_URL, api_key=QDRANT_API_KEY, timeout=60)
+    return QdrantVectorStore(
+        client=qdrant_client,
         collection_name=collection_name,
+        embedding=embedding_model,
     )
 
 @app.post("/upload")
 async def upload_file(
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
-    project_id: str = None
+    project_id: str = None,
+    process_images: bool = False,
+    process_tables: bool = False,
 ):
     if not project_id:
         raise HTTPException(status_code=400, detail="project_id is required")
@@ -94,13 +99,19 @@ async def upload_file(
         f.write(content)
 
     job_id = create_ingestion_job(project_id, file.filename or "unknown")
-    background_tasks.add_task(ingest_file_to_vector_db, file_path, project_id, file_size, file_type, job_id)
+    background_tasks.add_task(
+        ingest_file_to_vector_db,
+        file_path, project_id, file_size, file_type, job_id,
+        process_images, process_tables,
+    )
 
     return {
         "message": "File uploaded, processing started",
         "file_id": file_id,
         "project_id": project_id,
         "job_id": job_id,
+        "process_images": process_images,
+        "process_tables": process_tables,
     }
 
 
@@ -186,7 +197,7 @@ async def delete_document_from_vector_db(document_id: str, request: DeleteDocume
 
         collection_name = f"project_{request.project_id}"
 
-        qdrant = QdrantClient(url="http://localhost:6333")
+        qdrant = QdrantClient(url=QDRANT_URL, api_key=QDRANT_API_KEY, timeout=60)
 
         # Delete points where metadata.filename matches the document name
         qdrant.delete(
