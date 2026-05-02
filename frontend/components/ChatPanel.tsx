@@ -308,6 +308,7 @@ export function ChatPanel({
   const [showDocViewer, setShowDocViewer] = useState(documents.length > 0);
   const [selectedDoc, setSelectedDoc] = useState<Document | null>(documents[0] ?? null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const abortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
@@ -319,6 +320,10 @@ export function ChatPanel({
       setSelectedDoc(documents[0]);
     }
   }, [documents.length]);
+
+  useEffect(() => {
+    return () => { abortRef.current?.abort(); };
+  }, []);
 
   const handleSend = async () => {
     if (!input.trim() || isLoading) return;
@@ -333,47 +338,99 @@ export function ChatPanel({
       timestamp: new Date().toISOString(),
     };
 
-    setMessages(prev => [...prev, userMessage]);
+    const streamingMessage: ChatMessage = {
+      id: 'streaming',
+      projectId,
+      role: 'assistant',
+      content: '',
+      timestamp: new Date().toISOString(),
+      isStreaming: true,
+    };
+
+    setMessages(prev => [...prev, userMessage, streamingMessage]);
     onSend(query);
     setIsLoading(true);
 
     try {
-      const res = await axios.post(`${FASTAPI_URL}/chat`, {
-        query,
-        project_id: projectId,
+      const history = messages
+        .filter(m => m.id !== 'streaming')
+        .map(m => ({ role: m.role, content: m.content }));
+
+      abortRef.current = new AbortController();
+      const response = await fetch(`${FASTAPI_URL}/chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ query, project_id: projectId, messages: history }),
+        signal: abortRef.current.signal,
       });
+
+      if (!response.ok || !response.body) throw new Error('Stream failed');
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let fullContent = '';
+
+      let streamDone = false;
+      while (!streamDone) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        const text = decoder.decode(value, { stream: true });
+        for (const line of text.split('\n')) {
+          if (!line.startsWith('data: ')) continue;
+          const data = line.slice(6).trim();
+          if (data === '[DONE]') { streamDone = true; break; }
+          try {
+            const parsed = JSON.parse(data);
+            if (parsed.error) throw new Error(parsed.error);
+            if (parsed.token) {
+              fullContent += parsed.token;
+              setMessages(prev =>
+                prev.map(m => m.id === 'streaming' ? { ...m, content: fullContent } : m)
+              );
+            }
+          } catch (e) {
+            if (e instanceof SyntaxError) continue;
+            throw e;
+          }
+        }
+      }
+
+      if (!fullContent.trim()) {
+        setMessages(prev => prev.filter(m => m.id !== 'streaming' && m.id !== userMessage.id));
+        throw new Error('No content received from stream');
+      }
 
       const savedMessages = await axios.post(`/api/projects/${projectId}/chat`, {
         query,
-        answer: res.data.answer,
+        answer: fullContent,
         citations: [],
       });
 
-      const assistantMessage: ChatMessage = {
-        id: savedMessages.data.assistantMessage.id,
-        projectId,
-        role: 'assistant',
-        content: savedMessages.data.assistantMessage.content,
-        timestamp: savedMessages.data.assistantMessage.timestamp,
-        citations: savedMessages.data.assistantMessage.citations,
-      };
-
       setMessages(prev => {
-        const withoutOptimisticUser = prev.filter(m => m.id !== userMessage.id);
-        return [...withoutOptimisticUser,
+        const clean = prev.filter(m => m.id !== 'streaming' && m.id !== userMessage.id);
+        return [
+          ...clean,
           {
             id: savedMessages.data.userMessage.id,
-            role: 'user',
+            role: 'user' as const,
             content: savedMessages.data.userMessage.content,
             timestamp: savedMessages.data.userMessage.timestamp,
             projectId,
           },
-          assistantMessage
+          {
+            id: savedMessages.data.assistantMessage.id,
+            role: 'assistant' as const,
+            content: savedMessages.data.assistantMessage.content,
+            timestamp: savedMessages.data.assistantMessage.timestamp,
+            projectId,
+            citations: savedMessages.data.assistantMessage.citations,
+          },
         ];
       });
     } catch (error) {
+      if (error instanceof DOMException && error.name === 'AbortError') return;
       toast.error('Failed to get response. Please try again.');
-      setMessages(prev => prev.filter(m => m.id !== userMessage.id));
+      setMessages(prev => prev.filter(m => m.id !== userMessage.id && m.id !== 'streaming'));
     } finally {
       setIsLoading(false);
     }
@@ -530,6 +587,9 @@ export function ChatPanel({
                           <ReactMarkdown remarkPlugins={[remarkGfm]}>
                             {msg.content}
                           </ReactMarkdown>
+                          {msg.isStreaming && (
+                            <span className="inline-block w-0.5 h-4 bg-primary ml-0.5 animate-pulse align-middle" />
+                          )}
                         </div>
                       ) : (
                         <div className="whitespace-pre-wrap">{msg.content}</div>
@@ -557,36 +617,6 @@ export function ChatPanel({
               ))}
             </AnimatePresence>
 
-            {isLoading && (
-              <motion.div
-                initial={{ opacity: 0, y: 10 }}
-                animate={{ opacity: 1, y: 0 }}
-                className="flex gap-3"
-              >
-                <div className="h-8 w-8 rounded-lg bg-linear-to-br from-primary/20 to-primary/5 flex items-center justify-center shrink-0 shadow-sm">
-                  <Bot className="h-4 w-4 text-primary" />
-                </div>
-                <div className="bg-secondary/40 rounded-2xl rounded-tl-md border border-border/40 px-4 py-3">
-                  <div className="flex gap-1.5 items-center h-4">
-                    <motion.span
-                      animate={{ scale: [1, 1.2, 1] }}
-                      transition={{ duration: 0.6, repeat: Infinity, delay: 0 }}
-                      className="h-2 w-2 rounded-full bg-primary/60"
-                    />
-                    <motion.span
-                      animate={{ scale: [1, 1.2, 1] }}
-                      transition={{ duration: 0.6, repeat: Infinity, delay: 0.16 }}
-                      className="h-2 w-2 rounded-full bg-primary/60"
-                    />
-                    <motion.span
-                      animate={{ scale: [1, 1.2, 1] }}
-                      transition={{ duration: 0.6, repeat: Infinity, delay: 0.32 }}
-                      className="h-2 w-2 rounded-full bg-primary/60"
-                    />
-                  </div>
-                </div>
-              </motion.div>
-            )}
           </div>
 
           {/* Input */}

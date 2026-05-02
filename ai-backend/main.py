@@ -1,21 +1,23 @@
 from ingestion import ingest_file_to_vector_db
-from langchain_openai import OpenAIEmbeddings
-from langchain_qdrant import QdrantVectorStore
+from langchain_qdrant import QdrantVectorStore, RetrievalMode
 from qdrant_client import QdrantClient
-from openai import OpenAI
+from embeddings import embedding_model, sparse_embeddings
+from openai import AsyncOpenAI
 from dotenv import load_dotenv
 from fastapi import FastAPI, File, UploadFile, BackgroundTasks, HTTPException
-from fastapi.responses import FileResponse
-from pydantic import BaseModel
+from fastapi.responses import FileResponse, StreamingResponse
+from pydantic import BaseModel, Field
+import asyncio
+import json
 import os
 import uuid
 import requests
 import glob as file_glob
 from fastapi.middleware.cors import CORSMiddleware
-from typing import Optional
+from typing import Optional, Literal
 
 load_dotenv()
-client = OpenAI()
+async_client = AsyncOpenAI()
 
 QDRANT_URL = "https://9219ef2c-5862-409f-93ef-f0808298aad3.eu-west-2-0.aws.cloud.qdrant.io"
 QDRANT_API_KEY = os.getenv("QDRANT_API_KEY")
@@ -28,13 +30,14 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-embedding_model = OpenAIEmbeddings(
-    model="text-embedding-3-large"
-)
+class Message(BaseModel):
+    role: Literal["user", "assistant", "system"]
+    content: str
 
 class ChatRequest(BaseModel):
     query: str
     project_id: str
+    messages: list[Message] = Field(default=[], max_length=50)
 
 class UploadRequest(BaseModel):
     project_id: str
@@ -74,6 +77,8 @@ def get_vector_db_for_project(project_id: str) -> QdrantVectorStore:
         client=qdrant_client,
         collection_name=collection_name,
         embedding=embedding_model,
+        sparse_embedding=sparse_embeddings,
+        retrieval_mode=RetrievalMode.HYBRID,
     )
 
 @app.post("/upload")
@@ -121,7 +126,9 @@ async def chat_endpoint(request: ChatRequest):
     project_id = request.project_id
 
     vector_db = get_vector_db_for_project(project_id)
-    search_results = vector_db.similarity_search(query, k=6)
+    search_results = await asyncio.get_event_loop().run_in_executor(
+        None, lambda: vector_db.similarity_search(query, k=6)
+    )
 
     context = "\n\n\n".join([
         f"""
@@ -155,17 +162,28 @@ async def chat_endpoint(request: ChatRequest):
             {context}
     """
 
-    response = client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=[
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": query}
-        ],
-    )
+    messages = [
+        {"role": "system", "content": SYSTEM_PROMPT},
+        *[{"role": m.role, "content": m.content} for m in request.messages],
+        {"role": "user", "content": query},
+    ]
 
-    return {
-        "answer": response.choices[0].message.content
-    }
+    async def generate():
+        try:
+            stream = await async_client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=messages,
+                stream=True,
+            )
+            async for chunk in stream:
+                token = chunk.choices[0].delta.content
+                if token:
+                    yield f"data: {json.dumps({'token': token})}\n\n"
+            yield "data: [DONE]\n\n"
+        except Exception as e:
+            yield f"data: {json.dumps({'error': str(e)})}\n\n"
+
+    return StreamingResponse(generate(), media_type="text/event-stream")
 
 
 @app.get("/files/{project_id}/{document_name:path}")
