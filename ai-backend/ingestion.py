@@ -1,5 +1,5 @@
 # ingestion.py
-from langchain_qdrant import QdrantVectorStore
+from langchain_qdrant import QdrantVectorStore, RetrievalMode, FastEmbedSparse
 from langchain_openai import OpenAIEmbeddings
 from langchain_core.documents import Document
 from dotenv import load_dotenv
@@ -12,6 +12,7 @@ load_dotenv()
 QDRANT_API_KEY = os.getenv("QDRANT_API_KEY")
 
 embedding_model = OpenAIEmbeddings(model="text-embedding-3-large")
+sparse_embeddings = FastEmbedSparse(model_name="Qdrant/bm25")
 
 
 def prepare_chunks_for_ingestion(chunks):
@@ -61,6 +62,8 @@ def store_in_qdrant(docs, project_id: str):
     vector_store = QdrantVectorStore.from_documents(
         documents=docs,
         embedding=embedding_model,
+        sparse_embedding=sparse_embeddings,
+        retrieval_mode=RetrievalMode.HYBRID,
         url=QDRANT_URL,
         collection_name=collection_name,
         api_key=QDRANT_API_KEY,
