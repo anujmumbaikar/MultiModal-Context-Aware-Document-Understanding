@@ -49,6 +49,7 @@ export interface ChatMessage {
   content: string;
   citations?: Citation[];
   timestamp: string;
+  isStreaming?: boolean;
 }
 
 export interface Citation {
