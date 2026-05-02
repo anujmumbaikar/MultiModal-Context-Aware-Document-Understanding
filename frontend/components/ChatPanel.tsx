@@ -308,6 +308,7 @@ export function ChatPanel({
   const [showDocViewer, setShowDocViewer] = useState(documents.length > 0);
   const [selectedDoc, setSelectedDoc] = useState<Document | null>(documents[0] ?? null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const abortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
@@ -319,6 +320,10 @@ export function ChatPanel({
       setSelectedDoc(documents[0]);
     }
   }, [documents.length]);
+
+  useEffect(() => {
+    return () => { abortRef.current?.abort(); };
+  }, []);
 
   const handleSend = async () => {
     if (!input.trim() || isLoading) return;
@@ -351,10 +356,12 @@ export function ChatPanel({
         .filter(m => m.id !== 'streaming')
         .map(m => ({ role: m.role, content: m.content }));
 
+      abortRef.current = new AbortController();
       const response = await fetch(`${FASTAPI_URL}/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ query, project_id: projectId, messages: history }),
+        signal: abortRef.current.signal,
       });
 
       if (!response.ok || !response.body) throw new Error('Stream failed');
@@ -363,14 +370,15 @@ export function ChatPanel({
       const decoder = new TextDecoder();
       let fullContent = '';
 
-      while (true) {
+      let streamDone = false;
+      while (!streamDone) {
         const { done, value } = await reader.read();
         if (done) break;
         const text = decoder.decode(value, { stream: true });
         for (const line of text.split('\n')) {
           if (!line.startsWith('data: ')) continue;
           const data = line.slice(6).trim();
-          if (data === '[DONE]') break;
+          if (data === '[DONE]') { streamDone = true; break; }
           try {
             const parsed = JSON.parse(data);
             if (parsed.error) throw new Error(parsed.error);
@@ -380,8 +388,16 @@ export function ChatPanel({
                 prev.map(m => m.id === 'streaming' ? { ...m, content: fullContent } : m)
               );
             }
-          } catch {}
+          } catch (e) {
+            if (e instanceof SyntaxError) continue;
+            throw e;
+          }
         }
+      }
+
+      if (!fullContent.trim()) {
+        setMessages(prev => prev.filter(m => m.id !== 'streaming' && m.id !== userMessage.id));
+        throw new Error('No content received from stream');
       }
 
       const savedMessages = await axios.post(`/api/projects/${projectId}/chat`, {
@@ -412,6 +428,7 @@ export function ChatPanel({
         ];
       });
     } catch (error) {
+      if (error instanceof DOMException && error.name === 'AbortError') return;
       toast.error('Failed to get response. Please try again.');
       setMessages(prev => prev.filter(m => m.id !== userMessage.id && m.id !== 'streaming'));
     } finally {
